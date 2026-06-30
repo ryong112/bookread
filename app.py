@@ -1,36 +1,53 @@
 import streamlit as st
-import pytesseract
+import google.generativeai as genai
 from gtts import gTTS
 from PIL import Image
 import io
 
 # ==========================================
-# 1. 초기 설정 및 모듈화된 엔진 정의
+# 1. 고성능 구글 AI 엔진 정의
 # ==========================================
 
-def extract_text_from_image(image: Image.Image) -> str:
-    """[OCR 엔진] Tesseract를 사용하여 이미지에서 한글과 영어를 추출합니다."""
-    try:
-        # 한글(kor)과 영어(eng)를 동시에 인식하도록 설정
-        config = '--oem 3 --psm 6'
-        text = pytesseract.image_to_string(image, lang='kor+eng', config=config)
-        return text
-    except Exception as e:
-        st.error(f"OCR 엔진 오류: {e}")
-        return ""
-
-def summarize_text(text: str, ratio: float = 0.5) -> str:
-    """[요약 엔진] 입력된 텍스트를 문장 단위로 분할하여 핵심 요점을 추출합니다."""
-    if not text.strip():
-        return ""
-    
-    sentences = [s.strip() for s in text.split('.') if s.strip()]
-    if len(sentences) <= 2:
-        return text
+def extract_and_summarize_with_gemini(image: Image.Image, api_key: str, use_summary: bool) -> tuple[str, str]:
+    """
+    [구글 AI 통합 엔진]
+    복잡한 교과서 레이아웃을 인간 수준으로 분석하여 텍스트를 추출하고,
+    사용자가 원할 경우 완벽한 문맥적 요약본까지 한 번에 생성합니다.
+    """
+    if not api_key:
+        st.warning("🔑 왼쪽 사이드바에 구글 API 키를 입력해 주세요.")
+        return "", ""
         
-    summary_count = max(1, int(len(sentences) * ratio))
-    summarized_sentences = sentences[:summary_count]
-    return ". ".join(summarized_sentences) + "."
+    try:
+        # 구글 AI 인증 설정
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # AI에게 내릴 정교한 프롬프트 설정
+        prompt = (
+            "너는 저시력자와 대학생을 위한 최고의 독서 보조 전문가야. "
+            "주어진 이미지에서 모든 한글과 영어 텍스트를 복잡한 레이아웃(단 분할, 번호, 제목 등)에 상관없이 "
+            "사람이 실제 책을 읽는 올바른 순서대로 정확하게 추출해줘. "
+            "스마트폰 촬영으로 인해 발생한 오타나 깨진 글자가 있다면 앞뒤 문맥을 고려하여 완벽한 한국어 문장으로 자동 교정해줘."
+        )
+        
+        with st.spinner("구글 AI가 책의 문맥과 레이아웃을 정밀 분석하는 중..."):
+            # 이미지와 텍스트 프롬프트를 구글 서버로 전송
+            response = model.generate_content([image, prompt])
+            extracted_text = response.text
+            
+        summarized_text = ""
+        if use_summary and extracted_text.strip():
+            with st.spinner("핵심 요점 요약본을 생성하는 중..."):
+                summary_prompt = "다음 본문 내용을 대학생들이 빠르게 복습할 수 있도록 핵심 요점만 일목요연하게 요약해줘."
+                summary_response = model.generate_content([extracted_text, summary_prompt])
+                summarized_text = summary_response.text
+                
+        return extracted_text, summarized_text
+        
+    except Exception as e:
+        st.error(f"구글 AI 연동 중 오류가 발생했습니다: {e}")
+        return "", ""
 
 def generate_tts(text: str, lang: str) -> io.BytesIO:
     """[TTS 엔진] 텍스트를 음성 파일로 변환하여 메모리 스트림으로 반환합니다."""
@@ -49,9 +66,22 @@ st.set_page_config(page_title="보이스북 (VoiceBook)", layout="centered")
 st.title("📚 글 읽어주는 보이스북")
 st.markdown("### 늦은 나이에 학업을 시작하신 분들을 위한 스마트 독서 보조 도구")
 
+# 세션 상태 초기화
 if "scanned_texts" not in st.session_state:
     st.session_state.scanned_texts = []
+if "summary_texts" not in st.session_state:
+    st.session_state.summary_texts = []
 
+# 사이드바 설정 구역 (보안 및 환경 설정)
+st.sidebar.header("🔑 보안 및 리딩 설정")
+
+# 과거에 쓰시던 구글 API 키를 여기에 입력하시면 됩니다.
+google_api_key = st.sidebar.text_input("Google Gemini API Key 입력", type="password", help="가계부 만드실 때 사용했던 AI 키를 넣어주세요.")
+lang_option = st.sidebar.selectbox("주요 음성 언어 선택", ["한국어 (ko)", "영어 (en)"])
+lang_code = lang_option.split("(")[1].split(")")[0].strip()
+use_summary = st.sidebar.checkbox("요약본으로 듣기 (요점만 재생)", value=False)
+
+# 메인 화면 기능 제어
 input_method = st.radio("이미지 가져오기 방식 선택", ["📷 실시간 카메라 촬영", "🖼️ 앨범에서 이미지 불러오기"])
 
 image = None
@@ -71,44 +101,43 @@ else:
 if image:
     st.image(image, caption="선택된 이미지", width=400)
     
-    if st.button("📝 글자 인식 시작", type="primary"):
-        with st.spinner("글자를 분석하는 중입니다. 잠시만 기다려주세요..."):
-            # 정교하게 수정된 경량 OCR 엔진 호출
-            extracted_text = extract_text_from_image(image)
+    if st.button("🚀 구글 AI 분석 시작", type="primary"):
+        if not google_api_key:
+            st.error("❌ 왼쪽 사이드바에 구글 API 키를 먼저 입력해 주셔야 분석이 가능합니다!")
+        else:
+            raw_txt, sum_txt = extract_and_summarize_with_gemini(image, google_api_key, use_summary)
             
-            if extracted_text.strip():
-                st.session_state.scanned_texts.append(extracted_text)
-                st.success(f"성공적으로 글자를 추출했습니다! (현재 누적 페이지: {len(st.session_state.scanned_texts)}장)")
-            else:
-                st.warning("인식된 글자가 없습니다. 다시 선명하게 찍어주세요.")
+            if raw_txt.strip():
+                st.session_state.scanned_texts.append(raw_txt)
+                if use_summary:
+                    st.session_state.summary_texts.append(sum_txt)
+                st.success(f"성공적으로 분석을 완료했습니다! (현재 누적 페이지: {len(st.session_state.scanned_texts)}장)")
 
+# 결과물 출력 및 재생 구역
 if st.session_state.scanned_texts:
     st.divider()
-    st.subheader("📋 전체 누적 텍스트 정보")
     
     full_text = "\n\n".join(st.session_state.scanned_texts)
-    
-    with st.expander("원본 텍스트 보기", expanded=True):
-        st.write(full_text)
-        
-    st.sidebar.header("🛠️ 음성 및 리딩 설정")
-    lang_option = st.sidebar.selectbox("주요 언어 선택", ["한국어 (ko)", "영어 (en)"])
-    lang_code = lang_option.split("(")[1].split(")")[0].strip()
-    
-    use_summary = st.sidebar.checkbox("요약본으로 듣기 (요점만 재생)", value=False)
+    full_summary = "\n\n".join(st.session_state.summary_texts)
     
     final_text_to_read = full_text
-    if use_summary:
-        final_text_to_read = summarize_text(full_text)
-        st.info("💡 요점만 요약된 내용으로 음성을 생성합니다.")
-        st.code(final_text_to_read)
-        
+    
+    if use_summary and full_summary.strip():
+        final_text_to_read = full_summary
+        st.subheader("💡 구글 AI 요약본 (요점 요약)")
+        st.info(final_text_to_read)
+    else:
+        st.subheader("📋 전체 누적 텍스트")
+        with st.expander("원본 전체 텍스트 보기", expanded=True):
+            st.write(full_text)
+            
     if st.button("🔊 음성 파일 생성 및 듣기"):
-        with st.spinner("음성을 생성하고 있습니다..."):
+        with st.spinner("음성을 대본에 맞춰 생성하고 있습니다..."):
             audio_data = generate_tts(final_text_to_read, lang=lang_code)
             st.audio(audio_data, format="audio/mp3")
             st.success("재생 버튼을 누르면 오디오가 시작됩니다. 플레이어 내 우측 설정(⋮)에서 속도 조절이 가능합니다.")
 
     if st.button("🗑️ 전체 비우기 및 새로 시작"):
         st.session_state.scanned_texts = []
+        st.session_state.summary_texts = []
         st.rerun()
