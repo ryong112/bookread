@@ -129,11 +129,31 @@ if st.session_state.scanned_texts:
         with st.expander("원본 전체 텍스트 보기", expanded=True):
             st.write(full_text)
             
+# ==========================================
+# 기존 app.py 맨 아래의 이 버튼 구역을 아래 코드로 교체하세요
+# ==========================================
+
     if st.button("🔊 음성 파일 생성 및 듣기"):
         with st.spinner("음성을 대본에 맞춰 생성하고 있습니다..."):
-            audio_data = generate_tts(final_text_to_read, lang=lang_code)
+            
+            # [수정 포인트 1] gTTS가 '별표'라고 읽지 않도록 강조 기호(**)를 먼저 싹 제거합니다.
+            clean_text_to_read = final_text_to_read.replace("*", "")
+            
+            # 깨끗해진 텍스트로 음성 파일 생성
+            audio_data = generate_tts(clean_text_to_read, lang=lang_code)
+            
+            # 화면에 오디오 플레이어 송출
             st.audio(audio_data, format="audio/mp3")
             st.success("재생 버튼을 누르면 오디오가 시작됩니다. 플레이어 내 우측 설정(⋮)에서 속도 조절이 가능합니다.")
+            
+            # [수정 포인트 2] 아이폰/안드로이드에서 터치 한 번으로 다운로드할 수 있는 전용 버튼을 배치합니다.
+            st.download_button(
+                label="📥 스마트폰에 음성 파일(.mp3) 저장하기",
+                data=audio_data,
+                file_name="voicebook_audio.mp3",
+                mime="audio/mp3",
+                use_container_width=True # 버튼을 화면 너비에 맞게 큼직하게 키웁니다.
+            )
 
     if st.button("🗑️ 전체 비우기 및 새로 시작"):
         st.session_state.scanned_texts = []
