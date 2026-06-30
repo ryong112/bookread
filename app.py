@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai # 구글 최신 정식 표준 SDK 도입
 from gtts import gTTS
 from PIL import Image
 import io
@@ -10,20 +10,18 @@ import io
 
 def extract_and_summarize_with_gemini(image: Image.Image, api_key: str, use_summary: bool) -> tuple[str, str]:
     """
-    [구글 AI 통합 엔진]
-    복잡한 교과서 레이아웃을 인간 수준으로 분석하여 텍스트를 추출하고,
-    사용자가 원할 경우 완벽한 문맥적 요약본까지 한 번에 생성합니다.
+    [최신 구글 AI 표준 엔진]
+    구글의 최신 규격인 google-genai API를 사용하여 
+    레이아웃 분석 오류(404)를 완벽하게 해결하고 텍스트를 추출합니다.
     """
     if not api_key:
         st.warning("🔑 왼쪽 사이드바에 구글 API 키를 입력해 주세요.")
         return "", ""
         
     try:
-        # 구글 AI 인증 설정
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 최신 SDK 표준 방식으로 클라이언트 객체 생성
+        client = genai.Client(api_key=api_key)
         
-        # AI에게 내릴 정교한 프롬프트 설정
         prompt = (
             "너는 저시력자와 대학생을 위한 최고의 독서 보조 전문가야. "
             "주어진 이미지에서 모든 한글과 영어 텍스트를 복잡한 레이아웃(단 분할, 번호, 제목 등)에 상관없이 "
@@ -32,15 +30,21 @@ def extract_and_summarize_with_gemini(image: Image.Image, api_key: str, use_summ
         )
         
         with st.spinner("구글 AI가 책의 문맥과 레이아웃을 정밀 분석하는 중..."):
-            # 이미지와 텍스트 프롬프트를 구글 서버로 전송
-            response = model.generate_content([image, prompt])
+            # 최신 표준 모델인 'gemini-2.5-flash'와 contents 매개변수 적용
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[image, prompt]
+            )
             extracted_text = response.text
             
         summarized_text = ""
         if use_summary and extracted_text.strip():
             with st.spinner("핵심 요점 요약본을 생성하는 중..."):
                 summary_prompt = "다음 본문 내용을 대학생들이 빠르게 복습할 수 있도록 핵심 요점만 일목요연하게 요약해줘."
-                summary_response = model.generate_content([extracted_text, summary_prompt])
+                summary_response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=[extracted_text, summary_prompt]
+                )
                 summarized_text = summary_response.text
                 
         return extracted_text, summarized_text
@@ -66,22 +70,17 @@ st.set_page_config(page_title="보이스북 (VoiceBook)", layout="centered")
 st.title("📚 글 읽어주는 보이스북")
 st.markdown("### 늦은 나이에 학업을 시작하신 분들을 위한 스마트 독서 보조 도구")
 
-# 세션 상태 초기화
 if "scanned_texts" not in st.session_state:
     st.session_state.scanned_texts = []
 if "summary_texts" not in st.session_state:
     st.session_state.summary_texts = []
 
-# 사이드바 설정 구역 (보안 및 환경 설정)
 st.sidebar.header("🔑 보안 및 리딩 설정")
-
-# 과거에 쓰시던 구글 API 키를 여기에 입력하시면 됩니다.
 google_api_key = st.sidebar.text_input("Google Gemini API Key 입력", type="password", help="가계부 만드실 때 사용했던 AI 키를 넣어주세요.")
 lang_option = st.sidebar.selectbox("주요 음성 언어 선택", ["한국어 (ko)", "영어 (en)"])
 lang_code = lang_option.split("(")[1].split(")")[0].strip()
 use_summary = st.sidebar.checkbox("요약본으로 듣기 (요점만 재생)", value=False)
 
-# 메인 화면 기능 제어
 input_method = st.radio("이미지 가져오기 방식 선택", ["📷 실시간 카메라 촬영", "🖼️ 앨범에서 이미지 불러오기"])
 
 image = None
@@ -113,7 +112,6 @@ if image:
                     st.session_state.summary_texts.append(sum_txt)
                 st.success(f"성공적으로 분석을 완료했습니다! (현재 누적 페이지: {len(st.session_state.scanned_texts)}장)")
 
-# 결과물 출력 및 재생 구역
 if st.session_state.scanned_texts:
     st.divider()
     
